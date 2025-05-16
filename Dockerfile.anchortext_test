@@ -1,0 +1,9 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY eckert4/app/consumers/test_anchortext_extractor_consumer.py ./
+
+RUN pip install --no-cache-dir confluent-kafka beautifulsoup4
+
+ENTRYPOINT ["python", "test_anchortext_extractor_consumer.py"] 

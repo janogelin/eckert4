@@ -33,8 +33,8 @@ docker run -d \
 ### Start Memcached
 ```
 docker run -d \
-  --name memcached \
-  -p 11211:11211 \
+  --name memcached-test \
+  --network kafka-net \
   memcached:latest \
   memcached -vv
 ```
