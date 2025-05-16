@@ -1,4 +1,4 @@
-aimport os
+import os
 import time
 import subprocess
 import pytest

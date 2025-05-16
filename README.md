@@ -39,22 +39,25 @@ docker run -d \
   memcached -vv
 ```
 
-### Start Zookeeper
+### Create kafka-net if not existent
 ```
-docker run -d --name zookeeper -p 2181:2181 zookeeper:3.8
+docker network create kafka-net
+```
+
+### Start Zookeeper
+
+```
+docker run -d --rm --name zookeeper --network kafka-net -p 2181:2181 zookeeper:3.8
 ```
 
 ### Start Kafka (single instance)
 ```
-docker run -d --name kafka -p 9092:9092 \
-  --env KAFKA_ZOOKEEPER_CONNECT=host.docker.internal:2181 \
-  --env KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092 \
-  --env KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092 \
-  --env KAFKA_BROKER_ID=1 \
-  --env KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
-  --env KAFKA_LOG_RETENTION_HOURS=1 \
-  --env KAFKA_AUTO_CREATE_TOPICS_ENABLE=true \
-  --link zookeeper wurstmeister/kafka:2.13-2.8.1
+docker run -d --rm --name kafka --network kafka-net -p 9092:9092 --env KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181 --env KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092 --env KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092 --env KAFKA_BROKER_ID=1 --env KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 --env KAFKA_LOG_RETENTION_HOURS=1 --env KAFKA_AUTO_CREATE_TOPICS_ENABLE=true --link zookeeper wurstmeister/kafka:2.13-2.8.1
+```
+
+### Check queue with kafdrop
+```
+docker run --rm -d --name kafdrop --network kafka-net   -e KAFKA_BROKERCONNECT=kafka:9092   -p 9000:9000   obsidiandynamics/kafdrop
 ```
 
 ## Running the Test
