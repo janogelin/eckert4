@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+aiokafka
+pymemcache
+pyarrow
+tldextract
+pydantic
+beautifulsoup4
+etcd3
+protobuf==3.20.3
+

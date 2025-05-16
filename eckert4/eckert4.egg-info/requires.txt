@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+aiokafka
+pymemcache
+pyarrow
+tldextract
+pydantic

@@ -1,0 +1,27 @@
+eckert4/
+├── app/
+│   ├── __init__.py
+│   ├── main.py                # FastAPI entrypoint
+│   ├── crawler/
+│   │   ├── __init__.py
+│   │   └── page_crawler.py    # (to be integrated from guanacos)
+│   ├── consumers/
+│   │   ├── __init__.py
+│   │   ├── anchortext_parser.py
+│   │   └── embeddings_consumer.py
+│   ├── utils/
+│   │   ├── __init__.py
+│   │   └── ...
+│   ├── models/
+│   │   ├── __init__.py
+│   │   └── schemas.py         # Pydantic models, data schemas
+│   └── config.py              # Configuration (env, etc.)
+├── charts/                    # Helm charts or k8s manifests
+├── scripts/                   # Helper scripts for setup, deployment, etc.
+├── tests/
+│   ├── __init__.py
+│   └── test_main.py
+├── Dockerfile
+├── requirements.txt
+├── README.md
+└── .env.example 

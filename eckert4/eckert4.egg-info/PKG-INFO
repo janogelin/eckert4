@@ -1,0 +1,22 @@
+Metadata-Version: 2.4
+Name: eckert4
+Version: 0.1.0
+Summary: Distributed polite web crawler with FastAPI, Kafka, Memcached, and etcd.
+Home-page: 
+Author: Your Name
+Author-email: your.email@example.com
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Dist: fastapi
+Requires-Dist: uvicorn[standard]
+Requires-Dist: aiokafka
+Requires-Dist: pymemcache
+Requires-Dist: pyarrow
+Requires-Dist: tldextract
+Requires-Dist: pydantic
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: requires-dist
+Dynamic: summary
