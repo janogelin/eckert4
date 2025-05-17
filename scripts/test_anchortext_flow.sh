@@ -1,4 +1,4 @@
-#!/bin/bash
+install#!/bin/bash
 set -e
 
 # Pre-check: Remove old log file or directory and stop main app container if running

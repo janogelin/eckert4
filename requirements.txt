@@ -1,0 +1,7 @@
+pytest
+avro-python3
+confluent-kafka
+beautifulsoup4
+tldextract
+pydantic
+
