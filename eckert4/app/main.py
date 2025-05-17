@@ -13,10 +13,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import os
 import json
-from aiokafka import AIOKafkaProducer
-import asyncio
-from pydantic import HttpUrl
+from confluent_kafka import Producer
 from fastapi import Body
+from pydantic import HttpUrl
 import logging
 import traceback
 
@@ -56,14 +55,13 @@ def release_thread_slot(etcd, key, lease):
             lease.revoke()
 
 def send_to_kafka_sync(data, bootstrap_servers, topic):
-    async def _send():
-        producer = AIOKafkaProducer(bootstrap_servers=bootstrap_servers)
-        await producer.start()
-        try:
-            await producer.send_and_wait(topic, json.dumps(data).encode("utf-8"))
-        finally:
-            await producer.stop()
-    asyncio.run(_send())
+    producer_conf = {'bootstrap.servers': bootstrap_servers}
+    producer = Producer(producer_conf)
+    try:
+        producer.produce(topic, json.dumps(data).encode("utf-8"))
+        producer.flush()
+    except Exception as e:
+        print(f"[ERROR] Failed to send message to Kafka: {e}")
 
 app = FastAPI()
 

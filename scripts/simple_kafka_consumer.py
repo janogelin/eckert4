@@ -1,17 +1,12 @@
-import os
 import json
 from confluent_kafka import Consumer
-from bs4 import BeautifulSoup
 
-KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
-KAFKA_TOPIC = os.getenv("KAFKA_SOURCE_TOPIC", "crawled_pages")
-
-print(f'bootstrap servers {KAFKA_BOOTSTRAP_SERVERS}')
-print(f'topic {KAFKA_TOPIC}')
+KAFKA_BOOTSTRAP_SERVERS = 'kafka:9092'
+KAFKA_TOPIC = 'crawled_pages'
 
 conf = {
     'bootstrap.servers': KAFKA_BOOTSTRAP_SERVERS,
-    'group.id': 'simple-extractor-test-group',
+    'group.id': 'simple-consumer-group',
     'auto.offset.reset': 'earliest'
 }
 
