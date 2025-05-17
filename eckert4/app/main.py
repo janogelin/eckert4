@@ -1,5 +1,5 @@
 from fastapi import FastAPI, BackgroundTasks, HTTPException
-from app.models.schemas import URLListRequest
+from app.models.schemas import URLListRequest, CRAWLED_PAGE_AVRO_SCHEMA
 from app.config import settings
 from app.crawler.page_crawler import PageCrawler
 import etcd3
@@ -13,12 +13,14 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import os
 import json
-from aiokafka import AIOKafkaProducer
-import asyncio
-from pydantic import HttpUrl
+from confluent_kafka import Producer
 from fastapi import Body
+from pydantic import HttpUrl
 import logging
 import traceback
+import avro.schema
+from avro.datafile import DataFileWriter
+from avro.io import DatumWriter
 
 THREAD_LIMIT = 5
 ETCD_HOST = "localhost"
@@ -56,132 +58,96 @@ def release_thread_slot(etcd, key, lease):
             lease.revoke()
 
 def send_to_kafka_sync(data, bootstrap_servers, topic):
-    async def _send():
-        producer = AIOKafkaProducer(bootstrap_servers=bootstrap_servers)
-        await producer.start()
+    producer_conf = {'bootstrap.servers': bootstrap_servers}
+    producer = Producer(producer_conf)
+    try:
+        producer.produce(topic, json.dumps(data).encode("utf-8"))
+        producer.flush()
+    except Exception as e:
+        print(f"[ERROR] Failed to send message to Kafka: {e}")
+
+class AvroKafkaProducer:
+    def __init__(self, bootstrap_servers, topic, avro_schema_str):
+        self.bootstrap_servers = bootstrap_servers
+        self.topic = topic
+        self.schema = avro.schema.parse(avro_schema_str)
+        self.producer = Producer({'bootstrap.servers': bootstrap_servers})
+
+    def send(self, record):
+        # Serialize record to Avro binary
+        import io
+        buf = io.BytesIO()
+        writer = DataFileWriter(buf, DatumWriter(), self.schema)
+        writer.append(record)
+        writer.flush()
+        writer.close()
+        avro_bytes = buf.getvalue()
+        # Use normalized_url as key
+        key = record['normalized_url'].encode('utf-8')
+        self.producer.produce(self.topic, value=avro_bytes, key=key)
+        self.producer.flush()
+
+class CrawlerService:
+    def __init__(self, settings):
+        self.settings = settings
+        self.memcached = memcache_base.Client((settings.MEMCACHED_HOST, settings.MEMCACHED_PORT))
+        self.crawler = PageCrawler()
+        self.avro_producer = AvroKafkaProducer(
+            settings.KAFKA_BOOTSTRAP_SERVERS,
+            settings.KAFKA_TOPIC,
+            CRAWLED_PAGE_AVRO_SCHEMA
+        )
+
+    def crawl_one(self, url, etcd):
+        normalized_url = normalize_url(str(url))
+        last_seen = self.memcached.get(normalized_url)
+        if last_seen:
+            raise HTTPException(status_code=409, detail=f"URL {normalized_url} already crawled. Last seen at {last_seen.decode()}")
+        domain = get_domain(normalized_url)
+        key, lease = None, None
         try:
-            await producer.send_and_wait(topic, json.dumps(data).encode("utf-8"))
+            while True:
+                key, lease = acquire_thread_slot(etcd, domain)
+                if key:
+                    break
+                time.sleep(2)
+            result = self.crawler.crawl(normalized_url)
+            self.memcached.set(normalized_url, datetime.utcnow().isoformat())
+            record = {
+                "normalized_url": normalized_url,
+                "title": result["title"],
+                "text": result["text"],
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            # Send to Kafka as Avro
+            self.avro_producer.send(record)
+            return {"status": "Crawling complete", "result": record}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to crawl {normalized_url}: {e}")
         finally:
-            await producer.stop()
-    asyncio.run(_send())
+            release_thread_slot(etcd, key, lease)
+
+    def crawl_many(self, urls, etcd):
+        for url in urls:
+            try:
+                self.crawl_one(url, etcd)
+            except Exception as e:
+                print(f"Failed to crawl {url}: {e}")
 
 app = FastAPI()
+crawler_service = CrawlerService(settings)
 
 @app.post("/crawl")
 def crawl_urls(request: URLListRequest, background_tasks: BackgroundTasks):
-    background_tasks.add_task(process_urls, request.urls)
+    etcd_host = os.environ.get('ETCD_HOST', ETCD_HOST)
+    etcd_port = int(os.environ.get('ETCD_PORT', ETCD_PORT))
+    etcd = etcd3.client(host=etcd_host, port=etcd_port)
+    background_tasks.add_task(crawler_service.crawl_many, request.urls, etcd)
     return {"status": "Crawling started", "url_count": len(request.urls)}
 
 @app.post("/crawl_one")
 def crawl_one(url: HttpUrl = Body(..., embed=True)):
     etcd_host = os.environ.get('ETCD_HOST', ETCD_HOST)
     etcd_port = int(os.environ.get('ETCD_PORT', ETCD_PORT))
-    print(f"[DEBUG] Connecting to etcd at {etcd_host}:{etcd_port}")
-    try:
-        etcd = etcd3.client(host=etcd_host, port=etcd_port)
-        # Test connection
-        etcd.status()
-    except Exception as e:
-        print(f"[ERROR] Failed to connect to etcd at {etcd_host}:{etcd_port}: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to connect to etcd at {etcd_host}:{etcd_port}: {e}")
-    memcached = memcache_base.Client((settings.MEMCACHED_HOST, settings.MEMCACHED_PORT))
-    crawler = PageCrawler()
-    normalized_url = normalize_url(str(url))
-    last_seen = memcached.get(normalized_url)
-    if last_seen:
-        raise HTTPException(status_code=409, detail=f"URL {normalized_url} already crawled. Last seen at {last_seen.decode()}")
-    domain = get_domain(normalized_url)
-    key, lease = None, None
-    try:
-        # Acquire thread slot for politeness
-        while True:
-            key, lease = acquire_thread_slot(etcd, domain)
-            if key:
-                break
-            time.sleep(2)
-        result = crawler.crawl(normalized_url)
-        memcached.set(normalized_url, datetime.utcnow().isoformat())
-        table = pa.table({
-            "url": [normalized_url],
-            "title": [result["title"]],
-            "text": [result["text"]],
-            "timestamp": [datetime.utcnow().isoformat()]
-        })
-        parquet_path = os.path.join(OUTPUT_DIR, f"{domain.replace('.', '_')}.parquet")
-        pq.write_table(table, parquet_path)
-        kafka_data = {
-            "original_url": str(url),
-            "url": normalized_url,
-            "title": result["title"],
-            "text": result["text"],
-            "timestamp": datetime.utcnow().isoformat(),
-            "parquet_path": parquet_path
-        }
-        send_to_kafka_sync(kafka_data, settings.KAFKA_BOOTSTRAP_SERVERS, settings.KAFKA_TOPIC)
-        return {"status": "Crawling complete", "result": kafka_data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to crawl {normalized_url}: {e}")
-    finally:
-        release_thread_slot(etcd, key, lease)
-
-def process_urls(urls):
-    etcd_host = os.environ.get('ETCD_HOST', ETCD_HOST)
-    etcd_port = int(os.environ.get('ETCD_PORT', ETCD_PORT))
-    print(f"[DEBUG] Connecting to etcd at {etcd_host}:{etcd_port}")
-    try:
-        etcd = etcd3.client(host=etcd_host, port=etcd_port)
-        # Test connection
-        etcd.status()
-    except Exception as e:
-        print(f"[ERROR] Failed to connect to etcd at {etcd_host}:{etcd_port}: {e}")
-        traceback.print_exc()
-        raise
-    memcached = memcache_base.Client((settings.MEMCACHED_HOST, settings.MEMCACHED_PORT))
-    crawler = PageCrawler()
-    for url in urls:
-        normalized_url = normalize_url(str(url))
-        last_seen = memcached.get(normalized_url)
-        if last_seen:
-            print(f"URL {normalized_url} already crawled. Last seen at {last_seen.decode()}")
-            continue
-        domain = get_domain(normalized_url)
-        key, lease = None, None
-        try:
-            # Acquire thread slot for politeness
-            while True:
-                key, lease = acquire_thread_slot(etcd, domain)
-                if key:
-                    break
-                print(f"Thread limit reached for {domain}, waiting...")
-                time.sleep(2)
-            result = crawler.crawl(normalized_url)
-            print(f"Crawled {normalized_url}: {result['title']}")
-            # Store normalized URL and timestamp in Memcached
-            memcached.set(normalized_url, datetime.utcnow().isoformat())
-            # Save result as Parquet file
-            table = pa.table({
-                "url": [normalized_url],
-                "title": [result["title"]],
-                "text": [result["text"]],
-                "timestamp": [datetime.utcnow().isoformat()]
-            })
-            parquet_path = os.path.join(OUTPUT_DIR, f"{domain.replace('.', '_')}.parquet")
-            pq.write_table(table, parquet_path)
-            print(f"Saved Parquet file: {parquet_path}")
-            print(f"Parquet output: {table.to_pandas().to_dict()}")
-            # Send result to Kafka
-            kafka_data = {
-                "original_url": url,
-                "url": normalized_url,
-                "title": result["title"],
-                "text": result["text"],
-                "timestamp": datetime.utcnow().isoformat(),
-                "parquet_path": parquet_path
-            }
-            send_to_kafka_sync(kafka_data, settings.KAFKA_BOOTSTRAP_SERVERS, settings.KAFKA_TOPIC)
-            print(f"Sent result to Kafka topic {settings.KAFKA_TOPIC}")
-        except Exception as e:
-            print(f"Failed to crawl {normalized_url}: {e}")
-        finally:
-            release_thread_slot(etcd, key, lease)
+    etcd = etcd3.client(host=etcd_host, port=etcd_port)
+    return crawler_service.crawl_one(url, etcd)

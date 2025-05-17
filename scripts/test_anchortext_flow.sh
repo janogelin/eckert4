@@ -1,4 +1,4 @@
-#!/bin/bash
+install#!/bin/bash
 set -e
 
 # Pre-check: Remove old log file or directory and stop main app container if running
@@ -65,7 +65,7 @@ for i in {1..30}; do
 done
 
 # Step 2: Crawl a test URL using the main program's REST API
-TEST_URL="https://www.bbc.com/world"
+TEST_URL="https://www.cnn.com"
 API_ENDPOINT="http://localhost:8000/crawl_one"
 LOG_FILE="anchortext_test.log"
 

@@ -7,7 +7,7 @@ setup(
     install_requires=[
         "fastapi",
         "uvicorn[standard]",
-        "aiokafka",
+        "confluent-kafka",
         "pymemcache",
         "pyarrow",
         "tldextract",
